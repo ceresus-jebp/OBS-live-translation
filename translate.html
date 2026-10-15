@@ -1,180 +1,143 @@
 <!DOCTYPE html>
-<!-- Based on https://sayonari.coresv.com/ninshikiChan/text.html -->
-<html>
-
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <link href="https://fonts.googleapis.com/css?family=M+PLUS+Rounded+1c&display=swap" rel="stylesheet">
+<meta charset="UTF-8">
+<title>Live Translation</title>
 
-    <title>Live Translation</title>
+<style>
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+}
+body {
+    background: lightgreen;
+    font-family: Arial, sans-serif;
+}
+#captions {
+    position: fixed;
+    bottom: 0;
+    left: 3%;
+    width: 94%;
+    text-align: center;
+    overflow-wrap: break-word;
+    color: white;
+    font-size: 40pt;
+    font-weight: 900;
+    text-shadow: 2px 2px 3px black;
+}
+</style>
+</head>
 
-    <style type="text/css">
-        /* cousine-regular - latin */
-        @font-face {
-            font-family: 'Cousine';
-            font-style: normal;
-            font-weight: 400;
-            src: url('./fonts/cousine-v17-latin-regular.eot');
-            /* IE9 Compat Modes */
-            src: local(''),
-                url('./fonts/cousine-v17-latin-regular.eot?#iefix') format('embedded-opentype'),
-                /* IE6-IE8 */
-                url('./fonts/cousine-v17-latin-regular.woff2') format('woff2'),
-                /* Super Modern Browsers */
-                url('./fonts/cousine-v17-latin-regular.woff') format('woff'),
-                /* Modern Browsers */
-                url('./fonts/cousine-v17-latin-regular.ttf') format('truetype'),
-                /* Safari, Android, iOS */
-                url('./fonts/cousine-v17-latin-regular.svg#Cousine') format('svg');
-            /* Legacy iOS */
-        }
+<body>
+<div id="captions"></div>
 
-        button,
-        input,
-        select,
-        textarea {
-            /* font-family : inherit; */
-            /* font-size   : 300%; */
-            /* color  : black; */
-            font-weight: 0;
-            text-align: center;
-            /* left, center, right */
-            vertical-align: top;
-            /* top, middle, bottom */
-            -webkit-text-stroke-color: rgb(21, 0, 141);
-            -webkit-text-stroke-width: 0px;
-        }
+<script>
+"use strict";
 
-        html {
-            height: 100%;
-            width: 100%;
-        }
+const params = new URLSearchParams(location.search);
+const captions = document.getElementById("captions");
 
-        body {
-            height: 100%;
-            width: 100%;
-            margin: 0;
-            font-family: 'Cousine', sans-serif;
-        }
+document.body.style.backgroundColor =
+    params.get("bgcolor") || "lightgreen";
 
-        table {
-            width: 100%;
-            /* table-layout: fixed; */
-        }
+captions.style.color = params.get("color") || "white";
+captions.style.fontSize =
+    (Number(params.get("size")) || 40) + "pt";
+captions.style.fontWeight = params.get("weight") || "900";
 
-        table.btm_table {
-            position: absolute;
-            /* bottom:0; */
-        }
-
-        table td {
-            /*word-break: break-all;*/
-            overflow-wrap: break-word;
-        }
-    </style>
-
-    <style>
-        /* prepare the selectors to add a stroke to */
-
-        .stroke-single-imb {
-            /* position: absolute; */
-            left: 0;
-            right: 0;
-            margin: 0;
-            /* -webkit-text-stroke: 0px #0000FF;  */
-        }
-
-        .stroke-single-bg {
-            position: absolute;
-            left: 0;
-            right: 0;
-            margin: auto;
-            /* -webkit-text-stroke: 3px #FF0000;  */
-        }
-
-        /* add a single stroke */
-        .stroke-single-fg {
-            position: absolute;
-            left: 0;
-            right: 0;
-            margin: auto;
-            /* -webkit-text-stroke: 0px #FFFFFF; */
-        }
-    </style>
-      <script>
-function getParam(name) {
-    return new URLSearchParams(location.search).get(name);
+if (params.get("font")) {
+    captions.style.fontFamily = params.get("font");
 }
 
-window.onload = function () {
-    const SpeechAPI =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
+if (params.get("v_align") === "top") {
+    captions.style.bottom = "auto";
+    captions.style.top = "0";
+}
 
-    if (!SpeechAPI) {
-        alert("Open this page in Google Chrome.");
-        return;
-    }
+const SpeechAPI =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    const key = getParam("gs_key");
-    if (!key) {
-        alert("Missing gs_key in the page address.");
-        return;
-    }
+const key = params.get("gs_key");
 
+if (!SpeechAPI) {
+    captions.textContent = "Please open this page in Google Chrome.";
+} else if (!key) {
+    captions.textContent = "Missing gs_key in the page URL.";
+} else {
+    startCaptions();
+}
+
+function startCaptions() {
     const recognition = new SpeechAPI();
-    recognition.lang = getParam("recog") || "en-US";
+    recognition.lang = params.get("recog") || "en-US";
     recognition.interimResults = true;
     recognition.continuous = true;
 
     const source = recognition.lang.split("-")[0];
-    const target = getParam("trans") || "es";
+    const target = params.get("trans") || "es";
     const endpoint =
         "https://script.google.com/macros/s/" +
         encodeURIComponent(key) + "/exec";
 
     let pending = "";
     let lastSent = "";
+    let lastStarted = 0;
     let busy = false;
     let stopped = false;
-
-    // Show only translated text.
-    ["imb", "bg", "fg"].forEach(function (layer) {
-        document.getElementById("speech_text-" + layer).textContent = "";
-    });
+    let retryAfter = 0;
 
     async function translatePending() {
         if (busy || !pending || pending === lastSent) return;
 
+        const now = Date.now();
+        if (now < retryAfter || now - lastStarted < 1000) return;
+
         const text = pending;
         pending = "";
-        lastSent = text;
+        lastStarted = now;
         busy = true;
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
+        const started = performance.now();
 
         try {
             const query = new URLSearchParams({
-                text: text,
-                source: source,
-                target: target
+                text,
+                source,
+                target
             });
 
             const response = await fetch(endpoint + "?" + query, {
                 signal: controller.signal
             });
-            if (!response.ok) throw new Error("HTTP " + response.status);
+
+            if (!response.ok) {
+                throw new Error("HTTP " + response.status);
+            }
 
             const translated = await response.text();
 
-            ["imb", "bg", "fg"].forEach(function (layer) {
-                document.getElementById("trans_text-" + layer)
-                    .textContent = translated;
-            });
+            // Apps Script can return an HTML error page with HTTP 200.
+            if (/^\s*(<!doctype|<html)/i.test(translated)) {
+                throw new Error("Google returned an HTML error page.");
+            }
+
+            captions.textContent = translated;
+            lastSent = text;
+
+            console.log(
+                "TRANSLATION:",
+                Math.round(performance.now() - started) + " ms",
+                text,
+                "→",
+                translated
+            );
         } catch (error) {
             console.error("Translation failed:", error);
-            lastSent = "";
             if (!pending) pending = text;
+            retryAfter = Date.now() + 3000;
         } finally {
             clearTimeout(timeout);
             busy = false;
@@ -183,154 +146,48 @@ window.onload = function () {
 
     recognition.onresult = function (event) {
         let text = "";
+        let partial = false;
 
         for (let i = event.resultIndex; i < event.results.length; i++) {
             text += event.results[i][0].transcript + " ";
+            if (!event.results[i].isFinal) partial = true;
         }
 
         text = text.trim();
-        if (text) pending = text;
+        if (!text) return;
+
+        console.log(partial ? "PARTIAL:" : "FINAL:", text);
+
+        pending = text;
+        translatePending();
     };
 
     recognition.onerror = function (event) {
         console.warn("Speech recognition:", event.error);
+
         if (["not-allowed", "service-not-allowed", "audio-capture"]
             .includes(event.error)) {
             stopped = true;
+            captions.textContent =
+                "Check Chrome microphone permission and input device.";
         }
     };
 
     recognition.onend = function () {
-        if (!stopped) {
-            setTimeout(function () {
-                try { recognition.start(); }
-                catch (error) { console.warn(error); }
-            }, 300);
-        }
+        if (!stopped) setTimeout(startRecognition, 300);
     };
 
-    setInterval(translatePending, 1000);
-    recognition.start();
-};
-</script> 
-</head>
-
-
-
-
-
-
-<body>
-    <div class="big" id="result_text">
-        <table id="text_table" class="btm_table">
-            <tr>
-                <td id="tbl_td" align="center" valign='bottom'>
-                    <div class="stroke-single-bg" id="speech_text-bg">
-                        [ TRANSLATING HERE ]
-                    </div>
-                    <div class="stroke-single-fg" id="speech_text-fg">
-                        [ TRANSLATING HERE ]
-                    </div>
-                    <div class="stroke-single-imb" id="speech_text-imb">
-                        [ TRANSLATING HERE ]
-                    </div>
-
-                    <div class="stroke-single-bg" id="trans_text-bg">
-
-                    </div>
-                    <div class="stroke-single-fg" id="trans_text-fg">
-
-                    </div>
-                    <div class="stroke-single-imb" id="trans_text-imb">
-
-                    </div>
-                </td>
-            </tr>
-        </table>
-    </div>
-</body>
-
-<!-- ############## Last script ############## -->
-<script type="text/javascript">
-
-    // Change display style ---------------------------------
-    if (getParam('bgcolor') != null) {
-        document.bgColor = getParam('bgcolor');
+    function startRecognition() {
+        try {
+            recognition.start();
+        } catch (error) {
+            console.warn("Could not start recognition:", error);
+        }
     }
 
-    if (getParam('v_align') == "top") {
-        document.getElementById("text_table").style.bottom = -1;
-    } else if (getParam('v_align') == "bottom") {
-        document.getElementById("text_table").style.bottom = 0;
-    }
-
-    // Adjust the background color
-    if (getParam('bgcolor') != null) {
-        document.getElementById("speech_text-imb").style.webkitTextStrokeColor = getParam('bgcolor');
-    }
-
-    if (getParam('st_width') != null) {
-        document.getElementById("speech_text-imb").style.webkitTextStrokeWidth = getParam('st_width') + 'pt';
-    }
-
-
-    if (getParam('bgcolor') != null) {
-        document.getElementById("trans_text-imb").style.webkitTextStrokeColor = getParam('bgcolor');
-    }
-
-    if (getParam('st_width') != null) {
-        document.getElementById("trans_text-imb").style.webkitTextStrokeWidth = getParam('st_width') + 'pt';
-    }
-
-
-    // Speech recognition result text
-    if (getParam('font') != null) {
-        document.getElementById("result_text").style.fontFamily = "'" + getParam('font') + "'";
-    }
-
-    if (getParam('size') != null) {
-        document.getElementById("result_text").style.fontSize = getParam('size') + 'pt';
-    }
-
-    if (getParam('color') != null) {
-        document.getElementById("speech_text-fg").style.color = getParam('color');
-    }
-
-    if (getParam('st_color') != null) {
-        document.getElementById("speech_text-bg").style.webkitTextStrokeColor = getParam('st_color');
-    }
-
-    if (getParam('weight') != null) {
-        document.getElementById("result_text").style.fontWeight = getParam('weight');
-    }
-
-    if (getParam('st_width') != null) {
-        document.getElementById("speech_text-bg").style.webkitTextStrokeWidth = getParam('st_width') + 'pt';
-    }
-
-
-    // Translation result text
-    if (getParam('color') != null) {
-        document.getElementById("trans_text-fg").style.color = getParam('color');
-    }
-
-    if (getParam('st_color') != null) {
-        document.getElementById("trans_text-bg").style.webkitTextStrokeColor = getParam('st_color');
-    }
-
-    if (getParam('st_width') != null) {
-        document.getElementById("trans_text-bg").style.webkitTextStrokeWidth = getParam('st_width') + 'pt';
-    }
-
-    function getParam(name, url) {
-        if (!url) url = window.location.href;
-        name = name.replace(/[\[\]]/g, "\\$&");
-        var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
-            results = regex.exec(url);
-        if (!results) return null;
-        if (!results[2]) return '';
-        return decodeURIComponent(results[2].replace(/\+/g, " "));
-    }
+    setInterval(translatePending, 250);
+    startRecognition();
+}
 </script>
-
+</body>
 </html>
