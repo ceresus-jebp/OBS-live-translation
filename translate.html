@@ -102,147 +102,119 @@
         }
     </style>
 
-    <script>
-        var flag_speech = 0;
+   <script>
+function getParam(name) {
+    return new URLSearchParams(location.search).get(name);
+}
 
-        // Speech recognition starts when window is loaded --------------
-        window.onload = function () {
-            vr_function();
+window.onload = function () {
+    const SpeechAPI =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechAPI) {
+        alert("Open this page in Google Chrome.");
+        return;
+    }
+
+    const key = getParam("gs_key");
+    if (!key) {
+        alert("Missing gs_key in the page address.");
+        return;
+    }
+
+    const recognition = new SpeechAPI();
+    recognition.lang = getParam("recog") || "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = true;
+
+    const source = recognition.lang.split("-")[0];
+    const target = getParam("trans") || "es";
+    const endpoint =
+        "https://script.google.com/macros/s/" +
+        encodeURIComponent(key) + "/exec";
+
+    let pending = "";
+    let lastSent = "";
+    let busy = false;
+    let stopped = false;
+
+    // Show only translated text.
+    ["imb", "bg", "fg"].forEach(function (layer) {
+        document.getElementById("speech_text-" + layer).textContent = "";
+    });
+
+    async function translatePending() {
+        if (busy || !pending || pending === lastSent) return;
+
+        const text = pending;
+        pending = "";
+        lastSent = text;
+        busy = true;
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+
+        try {
+            const query = new URLSearchParams({
+                text: text,
+                source: source,
+                target: target
+            });
+
+            const response = await fetch(endpoint + "?" + query, {
+                signal: controller.signal
+            });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+
+            const translated = await response.text();
+
+            ["imb", "bg", "fg"].forEach(function (layer) {
+                document.getElementById("trans_text-" + layer)
+                    .textContent = translated;
+            });
+        } catch (error) {
+            console.error("Translation failed:", error);
+            lastSent = "";
+            if (!pending) pending = text;
+        } finally {
+            clearTimeout(timeout);
+            busy = false;
+        }
+    }
+
+    recognition.onresult = function (event) {
+        let text = "";
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            text += event.results[i][0].transcript + " ";
         }
 
+        text = text.trim();
+        if (text) pending = text;
+    };
 
-        // Function for getting URL parameters ---------------------------
-        function getParam(name, url) {
-            if (!url) url = window.location.href;
-            name = name.replace(/[\[\]]/g, "\\$&");
-            var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
-                results = regex.exec(url);
-            if (!results) return null;
-            if (!results[2]) return '';
-            return decodeURIComponent(results[2].replace(/\+/g, " "));
+    recognition.onerror = function (event) {
+        console.warn("Speech recognition:", event.error);
+        if (["not-allowed", "service-not-allowed", "audio-capture"]
+            .includes(event.error)) {
+            stopped = true;
         }
+    };
 
-        function vr_function() {
-            window.SpeechRecognition = window.SpeechRecognition || webkitSpeechRecognition;
-
-            // Settings for voice recognition ----------------------
-            var recognition = new webkitSpeechRecognition();
-            recognition.lang = 'en';
-            recognition.interimResults = true;
-            recognition.continuous = true;
-            var recog_text = '';
-            var trans_text = '';
-
-            // Translation settings ---------------------------
-            var trans_sourcelang = 'en';
-            var trans_destlang = 'pt-BR';
-
-            var gs_key = getParam('gs_key');
-
-            var TRANS_URL = 'https://script.google.com/macros/s/' + gs_key + '/exec';
-            var query = ''
-
-            ///////////////////////////////////////////////////////////
-            // Events ---------------------------------
-            recognition.onsoundstart = function () {
-                // document.getElementById('status').innerHTML = "Listening";
-            };
-            recognition.onspeechstart = function () {
-                // document.getElementById('status').innerHTML = "Listening";
-            };
-            recognition.onnomatch = function () {
-                // document.getElementById('status').innerHTML = "Please try again";
-            };
-            recognition.onerror = function () {
-                // document.getElementById('status').innerHTML = "Error";
-                vr_function();
-            };
-            recognition.onsoundend = function () {
-                // document.getElementById('status').innerHTML = "Stopping";
-                recognition.stop()
-                vr_function();
-            };
-            recognition.onspeechend = function () {
-                // document.getElementById('status').innerHTML = "Stopping";
-                recognition.stop()
-                vr_function();
-            };
-
-            //////////////////////////////////////////////////////////
-            // URL parameters -------------------
-            arg_recog = getParam('recog');
-            arg_trans = getParam('trans');
-
-            // Language setting ----------------------------
-            if (arg_recog != null) {
-                recognition.lang = arg_recog;
-                trans_sourcelang = recognition.lang;
-            }
-            if (arg_trans != null) {
-                trans_destlang = arg_trans;
-            }
-
-            if (trans_sourcelang == trans_destlang) {
-                alert("ERROR! Please set different language between recog and trans!\nYou set both [" + trans_sourcelang + "]!");
-            }
-
-            /////////////////////////////////////////////////////////
-            // API settings ---------------------------
-            var request = new XMLHttpRequest();
-
-            // When the recognition result is returned ------------------
-            recognition.onresult = function (event) {
-                var results = event.results;
-                for (var i = event.resultIndex; i < results.length; i++) {
-                    if (results[i].isFinal) {
-                        // console.log(results);
-                        recog_text = results[i][0].transcript;
-
-                        // document.getElementById('speech_text-imb').innerHTML = recog_text;
-                        // document.getElementById('speech_text-bg').innerHTML = recog_text;
-                        // document.getElementById('speech_text-fg').innerHTML = recog_text;
-
-                        if (gs_key != null) {
-                            query = TRANS_URL + '?text=' + recog_text + '&source=' + trans_sourcelang + '&target=' + trans_destlang;
-                            request.open('GET', query, true);
-
-                            request.onreadystatechange = function () {
-                                if (request.readyState === 4 && request.status === 200) {
-                                    // document.getElementById('speech_text-imb').innerHTML = recog_text;
-                                    // document.getElementById('speech_text-bg').innerHTML = recog_text;
-                                    // document.getElementById('speech_text-fg').innerHTML = recog_text;
-                                    document.getElementById('trans_text-imb').innerHTML = request.responseText;
-                                    document.getElementById('trans_text-bg').innerHTML = request.responseText;
-                                    document.getElementById('trans_text-fg').innerHTML = request.responseText;
-                                }
-                                vr_function();
-                            }
-                            request.send(null);
-                        } else {
-                            document.getElementById('speech_text-imb').innerHTML = recog_text;
-                            document.getElementById('speech_text-bg').innerHTML = recog_text;
-                            document.getElementById('speech_text-fg').innerHTML = recog_text;
-                            vr_function();
-                        }
-                    }
-                    else {
-                        document.getElementById('speech_text-imb').innerHTML = "<< " + results[i][0].transcript + " >>";
-                        document.getElementById('speech_text-bg').innerHTML = "<< " + results[i][0].transcript + " >>";
-                        document.getElementById('speech_text-fg').innerHTML = "<< " + results[i][0].transcript + " >>";
-                        flag_speech = 1;
-                    }
-                }
-            }
-            flag_speech = 0;
-            recognition.start();
+    recognition.onend = function () {
+        if (!stopped) {
+            setTimeout(function () {
+                try { recognition.start(); }
+                catch (error) { console.warn(error); }
+            }, 300);
         }
-    </script>
+    };
+
+    setInterval(translatePending, 1000);
+    recognition.start();
+};
+</script>
 </head>
-
-
-
-
-
 
 <body>
     <div class="big" id="result_text">
