@@ -91,7 +91,9 @@ function startCaptions() {
         if (busy || !pending || pending === lastSent) return;
 
         const now = Date.now();
-        if (now < retryAfter || now - lastStarted < 1000) return;
+
+        // Start requests no more frequently than every 600 ms.
+        if (now < retryAfter || now - lastStarted < 600) return;
 
         const text = pending;
         pending = "";
@@ -119,7 +121,6 @@ function startCaptions() {
 
             const translated = await response.text();
 
-            // Apps Script can return an HTML error page with HTTP 200.
             if (/^\s*(<!doctype|<html)/i.test(translated)) {
                 throw new Error("Google returned an HTML error page.");
             }
